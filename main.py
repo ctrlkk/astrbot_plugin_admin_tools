@@ -16,56 +16,75 @@ from astrbot.core.star.star_tools import StarTools
 class MyPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
+        self.config = context.get_config()
         data_dir = StarTools.get_data_dir()
         self.db_path = path.join(data_dir, "blacklist.db")
+        self.db = None
+
+        # 黑名单最长时长
+        self.max_blacklist_duration = self.config.get(
+            "max_blacklist_duration", 1 * 24 * 60 * 60
+        )
+        # 是否允许永久黑名单
+        self.allow_permanent_blacklist = self.config.get(
+            "allow_permanent_blacklist", True
+        )
+        # 非授权禁言最大时长（秒）
+        self.max_unauthorized_ban_duration = self.config.get(
+            "max_unauthorized_ban_duration", 3 * 60
+        )
 
     async def initialize(self):
         """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
+        self.db = await aiosqlite.connect(self.db_path)
+        # 增加缓存大小
+        await self.db.execute("PRAGMA cache_size = -10000")
         await self._init_db()
-
-    async def _init_db(self):
-        """初始化数据库，创建黑名单表"""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS blacklist (
-                    user_id TEXT PRIMARY KEY,
-                    ban_time TEXT NOT NULL,
-                    expire_time TEXT,
-                    reason TEXT
-                )
-            """)
-            await db.commit()
 
     async def terminate(self):
         """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        if self.db:
+            await self.db.close()
+            self.db = None
+
+    async def _init_db(self):
+        """初始化数据库，创建黑名单表"""
+        await self.db.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist (
+                user_id TEXT PRIMARY KEY,
+                ban_time TEXT NOT NULL,
+                expire_time TEXT,
+                reason TEXT
+            )
+        """)
+        await self.db.commit()
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent):
         sender_id = event.get_sender_id()
         try:
             # 检查用户是否在黑名单中
-            async with aiosqlite.connect(self.db_path) as db:
-                cursor = await db.execute(
-                    "SELECT * FROM blacklist WHERE user_id = ?", (sender_id,)
-                )
-                user = await cursor.fetchone()
+            cursor = await self.db.execute(
+                "SELECT * FROM blacklist WHERE user_id = ?", (sender_id,)
+            )
+            user = await cursor.fetchone()
 
-                if user:
-                    expire_time = user[2]
-                    if expire_time:
-                        expire_datetime = datetime.fromisoformat(expire_time)
-                        if datetime.now() > expire_datetime:
-                            await db.execute(
-                                "DELETE FROM blacklist WHERE user_id = ?", (sender_id,)
-                            )
-                            await db.commit()
-                            logger.info(f"用户 {sender_id} 的黑名单已过期，已自动移除")
-                        else:
-                            logger.info(f"用户 {sender_id} 在黑名单中，消息已被阻止")
-                            event.stop_event()
+            if user:
+                expire_time = user[2]
+                if expire_time:
+                    expire_datetime = datetime.fromisoformat(expire_time)
+                    if datetime.now() > expire_datetime:
+                        await self.db.execute(
+                            "DELETE FROM blacklist WHERE user_id = ?", (sender_id,)
+                        )
+                        await self.db.commit()
+                        logger.info(f"用户 {sender_id} 的黑名单已过期，已自动移除")
                     else:
-                        logger.info(f"用户 {sender_id} 在永久黑名单中，消息已被阻止")
+                        logger.info(f"用户 {sender_id} 在黑名单中，消息已被阻止")
                         event.stop_event()
+                else:
+                    logger.info(f"用户 {sender_id} 在永久黑名单中，消息已被阻止")
+                    event.stop_event()
         except Exception as e:
             logger.error(f"检查黑名单时出错：{e}")
 
@@ -85,13 +104,14 @@ class MyPlugin(Star):
             return "此操作仅可在群聊中进行。"
 
         if not event.is_admin():
-            return "这项操作需要管理员授权。"
+            if duration > self.max_unauthorized_ban_duration:
+                duration = self.max_unauthorized_ban_duration
 
         await event.bot.set_group_ban(
             group_id=group_id, user_id=user_id, duration=duration, self_id=self_id
         )
         logger.info(f"用户：{user_id}在群聊中被：{self_id}执行禁言{duration}秒")
-        return f"用户 {user_id} 已被禁言 {duration} 秒。"
+        return f"用户 {user_id} 已被禁言。"
 
     @filter.llm_tool(name="set_group_kick")
     async def set_group_kick(
@@ -108,7 +128,7 @@ class MyPlugin(Star):
             return "此操作仅可在群聊中进行。"
 
         if not event.is_admin():
-            return "这项操作需要管理员授权。"
+            return f"{event.get_sender_id()} 无法执行该操作"
 
         await event.bot.set_group_kick(
             group_id=group_id,
@@ -133,23 +153,33 @@ class MyPlugin(Star):
         try:
             ban_time = datetime.now().isoformat()
             expire_time = None
+            actual_duration = duration
 
-            if duration > 0:
-                expire_time = (datetime.now() + timedelta(seconds=duration)).isoformat()
+            # 如果不允许永久黑名单，则使用默认时长
+            if duration == 0 and not self.allow_permanent_blacklist:
+                actual_duration = self.max_blacklist_duration
 
-            async with aiosqlite.connect(self.db_path) as db:
-                await db.execute(
-                    """INSERT OR REPLACE INTO blacklist (user_id, ban_time, expire_time, reason)
-                    VALUES (?, ?, ?, ?)""",
-                    (user_id, ban_time, expire_time, reason),
-                )
-                await db.commit()
+            # 超出使用最大时间
+            if actual_duration > self.max_blacklist_duration:
+                actual_duration = self.max_blacklist_duration
 
-            if duration > 0:
+            if actual_duration > 0:
+                expire_time = (
+                    datetime.now() + timedelta(seconds=actual_duration)
+                ).isoformat()
+
+            await self.db.execute(
+                """INSERT OR REPLACE INTO blacklist (user_id, ban_time, expire_time, reason)
+                VALUES (?, ?, ?, ?)""",
+                (user_id, ban_time, expire_time, reason),
+            )
+            await self.db.commit()
+
+            if actual_duration > 0:
                 logger.info(
-                    f"用户 {user_id} 已被加入黑名单，时长 {duration} 秒，原因：{reason}"
+                    f"用户 {user_id} 已被加入黑名单，时长 {actual_duration} 秒，原因：{reason}"
                 )
-                return f"用户 {user_id} 已被加入黑名单，时长 {duration} 秒。"
+                return f"用户 {user_id} 已被加入黑名单。"
 
             else:
                 logger.info(f"用户 {user_id} 已被永久加入黑名单，原因：{reason}")
@@ -157,7 +187,7 @@ class MyPlugin(Star):
 
         except Exception as e:
             logger.error(f"添加用户 {user_id} 到黑名单时出错：{e}")
-            return MessageEventResult().message("添加用户到黑名单时出错")
+            return "添加用户到黑名单时出错"
 
     @filter.llm_tool(name="remove_from_blacklist")
     async def remove_from_blacklist(self, user_id: str) -> MessageEventResult:
@@ -167,17 +197,16 @@ class MyPlugin(Star):
             user_id(string): The ID of the user to be removed from the blacklist
         """
         try:
-            async with aiosqlite.connect(self.db_path) as db:
-                cursor = await db.execute(
-                    "SELECT * FROM blacklist WHERE user_id = ?", (user_id,)
-                )
-                user = await cursor.fetchone()
+            cursor = await self.db.execute(
+                "SELECT * FROM blacklist WHERE user_id = ?", (user_id,)
+            )
+            user = await cursor.fetchone()
 
-                if not user:
-                    return f"用户 {user_id} 不在黑名单中。"
+            if not user:
+                return f"用户 {user_id} 不在黑名单中。"
 
-                await db.execute("DELETE FROM blacklist WHERE user_id = ?", (user_id,))
-                await db.commit()
+            await self.db.execute("DELETE FROM blacklist WHERE user_id = ?", (user_id,))
+            await self.db.commit()
 
             logger.info(f"用户 {user_id} 已从黑名单中移除")
             return f"用户 {user_id} 已从黑名单中移除。"

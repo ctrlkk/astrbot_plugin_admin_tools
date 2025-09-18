@@ -1,0 +1,20 @@
+{
+  "max_blacklist_duration": {
+    "type": "int",
+    "description": "黑名单最长时长（秒）",
+    "hint": "用户被加入黑名单的最长时间，超过此时间将自动解除。默认为 86400 秒（1天）",
+    "default": 86400
+  },
+  "allow_permanent_blacklist": {
+    "type": "bool",
+    "description": "是否允许永久黑名单",
+    "hint": "启用后，管理员可以将用户永久加入黑名单。默认为 true",
+    "default": true
+  },
+  "max_unauthorized_ban_duration": {
+    "type": "int",
+    "description": "非授权禁言最大时长（秒）",
+    "hint": "非管理员用户执行禁言操作的最大时长，超过此时长将自动调整为该值。默认为 180 秒（3分钟）",
+    "default": 180
+  }
+}
