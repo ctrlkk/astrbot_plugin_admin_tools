@@ -12,7 +12,7 @@ from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
 from astrbot.core.star.star_tools import StarTools
 
 
-@register("astrbot_plugin_admin_tools", "ctrlkk", "神奇妙妙小工具", "1.0.0")
+@register("astrbot_plugin_admin_tools", "ctrlkk", "允许LLM禁言、踢出、拉黑用户", "1.0.0")
 class MyPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)

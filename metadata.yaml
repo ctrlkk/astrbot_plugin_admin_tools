@@ -1,5 +1,5 @@
 name: astrbot_plugin_admin_tools
-desc: 神奇妙妙小工具
+desc: 允许LLM禁言、踢出、拉黑用户
 version: v1.0
 author: ctrlkk
 repo: https://github.com/ctrlkk/astrbot_plugin_admin_tools
