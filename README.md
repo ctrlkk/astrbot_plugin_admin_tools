@@ -13,3 +13,5 @@
 - **remove_from_blacklist**: 从黑名单移除用户
 
 黑名单用户发送的消息将被自动忽略。
+
+> 黑名单功能迁移至：https://github.com/ctrlkk/astrbot_plugin_blacklist_tools
