@@ -1,5 +1,5 @@
 name: astrbot_plugin_admin_tools
 desc: 允许LLM禁言、踢出用户
-version: v1.1
+version: v1.2
 author: ctrlkk
 repo: https://github.com/ctrlkk/astrbot_plugin_admin_tools

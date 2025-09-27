@@ -1,6 +1,7 @@
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
+from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.message.message_event_result import MessageEventResult
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import (
     AiocqhttpMessageEvent,
@@ -9,16 +10,15 @@ from astrbot.core.star.star_tools import StarTools
 
 
 @register(
-    "astrbot_plugin_admin_tools", "ctrlkk", "允许LLM禁言、踢出用户", "1.1"
+    "astrbot_plugin_admin_tools", "ctrlkk", "允许LLM禁言、踢出用户", "1.2"
 )
 class MyPlugin(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        self.config = context.get_config()
         self.data_dir = StarTools.get_data_dir()
 
         # 非授权禁言最大时长（秒）
-        self.max_unauthorized_ban_duration = self.config.get(
+        self.max_unauthorized_ban_duration = config.get(
             "max_unauthorized_ban_duration", 3 * 60
         )
 
